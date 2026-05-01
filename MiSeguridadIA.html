@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCTV Monitor - Multi-User</title>
+    <style>
+        :root {
+            --cctv-green: #00ff41;
+            --cctv-red: #ff0000;
+            --cctv-bg: rgba(0, 255, 65, 0.1);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050505;
+            color: var(--cctv-green);
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            text-transform: uppercase;
+        }
+
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            overflow: hidden;
+            cursor: crosshair;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: grayscale(0.3) contrast(1.2) brightness(0.8);
+            transition: transform 0.1s ease-out;
+            cursor: grab;
+            will-change: transform;
+            transform-origin: center center;
+        }
+
+        video:active {
+            cursor: grabbing;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            padding: 30px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        /* Botón de Compartir */
+        .share-controls {
+            position: absolute;
+            left: 30px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 20;
+            pointer-events: all;
+        }
+
+        .share-btn {
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid var(--cctv-green);
+            color: var(--cctv-green);
+            padding: 15px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.3s;
+            border-radius: 4px;
+        }
+
+        .share-btn:hover {
+            background: var(--cctv-green);
+            color: #000;
+        }
+
+        .share-btn svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        /* Modal de Compartir */
+        #share-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(5, 5, 5, 0.95);
+            border: 2px solid var(--cctv-green);
+            padding: 25px;
+            z-index: 100;
+            display: none;
+            width: 300px;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+        }
+
+        #share-link-display {
+            background: #111;
+            border: 1px dashed var(--cctv-green);
+            padding: 10px;
+            margin: 15px 0;
+            word-break: break-all;
+            font-size: 0.8rem;
+            color: #fff;
+        }
+
+        .modal-btn {
+            background: var(--cctv-green);
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: inherit;
+        }
+
+        .timestamp {
+            position: absolute;
+            top: 30px;
+            right: 40px;
+            font-size: 1.5rem;
+            text-shadow: 2px 2px 2px #000;
+            letter-spacing: 2px;
+            text-align: right;
+        }
+
+        .rec-indicator {
+            position: absolute;
+            top: 30px;
+            left: 40px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        .dot {
+            width: 15px;
+            height: 15px;
+            background-color: var(--cctv-red);
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+
+        .noise {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: url('https://grainy-gradients.vercel.app/noise.svg');
+            opacity: 0.05;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(
+                to bottom,
+                rgba(18, 16, 16, 0) 50%,
+                rgba(0, 0, 0, 0.25) 50%
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 6;
+        }
+
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+
+        .error-msg {
+            position: absolute;
+            background: rgba(0,0,0,0.9);
+            padding: 30px;
+            border: 2px solid var(--cctv-red);
+            color: var(--cctv-red);
+            display: none;
+            z-index: 100;
+            text-align: center;
+            max-width: 80%;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="container">
+        <video id="webcam" autoplay playsinline></video>
+        
+        <div class="noise"></div>
+        <div class="scanlines"></div>
+
+        <div class="overlay">
+            <div class="rec-indicator">
+                <div class="dot"></div>
+                <span>REC</span>
+            </div>
+            
+            <div id="clock" class="timestamp">
+                01/01/2024<br>00:00:00
+            </div>
+        </div>
+
+        <div class="share-controls">
+            <button class="share-btn" onclick="openShareModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13"/>
+                </svg>
+                <span style="font-size: 0.7rem;">SHARE</span>
+            </button>
+        </div>
+
+        <div id="share-modal">
+            <div style="font-weight: bold; margin-bottom: 10px;">COMPARTIR ACCESO</div>
+            <p style="font-size: 0.7rem;">Copia este enlace para controlar desde otro dispositivo:</p>
+            <div id="share-link-display">Cargando...</div>
+            <button class="modal-btn" onclick="copyShareLink()">COPIAR</button>
+            <button class="modal-btn" onclick="closeShareModal()" style="background: #333; color: white; margin-top: 5px;">CERRAR</button>
+        </div>
+
+        <div id="error" class="error-msg">
+            <div style="font-size: 1.5rem; margin-bottom: 10px;">⚠️ ERROR DE CÁMARA ⚠️</div>
+            <p>Asegúrate de permitir el acceso y que no haya otra app usándola.</p>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const clockElement = document.getElementById('clock');
+        const errorElement = document.getElementById('error');
+        const container = document.getElementById('container');
+        const shareModal = document.getElementById('share-modal');
+        const shareLinkDisplay = document.getElementById('share-link-display');
+
+        // Estado local (cada dispositivo tiene su propia copia de estas variables)
+        let zoomLevel = 1;
+        const ZOOM_SPEED = 0.4;
+        const MAX_ZOOM = 10;
+        const MIN_ZOOM = 1;
+
+        let isDragging = false;
+        let startX, startY;
+        let translateX = 0, translateY = 0;
+
+        function updateClock() {
+            const now = new Date();
+            const day = String(now.getDate()).padStart(2, '0');
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const year = now.getFullYear();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            clockElement.innerHTML = `${day}/${month}/${year}<br>${hours}:${minutes}:${seconds}`;
+        }
+
+        function applyTransform() {
+            video.style.transform = `scale(${zoomLevel}) translate(${translateX}px, ${translateY}px)`;
+            requestAnimationFrame(checkBoundaries);
+        }
+
+        function checkBoundaries() {
+            if (zoomLevel <= 1) {
+                translateX = 0;
+                translateY = 0;
+                video.style.transform = `scale(1) translate(0px, 0px)`;
+                return;
+            }
+
+            const vRect = video.getBoundingClientRect();
+            const cRect = container.getBoundingClientRect();
+
+            if (vRect.left > cRect.left) {
+                translateX -= (vRect.left - cRect.left) / zoomLevel;
+            }
+            if (vRect.right < cRect.right) {
+                translateX += (cRect.right - vRect.right) / zoomLevel;
+            }
+            if (vRect.top > cRect.top) {
+                translateY -= (vRect.top - cRect.top) / zoomLevel;
+            }
+            if (vRect.bottom < cRect.bottom) {
+                translateY += (cRect.bottom - vRect.bottom) / zoomLevel;
+            }
+
+            video.style.transform = `scale(${zoomLevel}) translate(${translateX}px, ${translateY}px)`;
+        }
+
+        // --- CONTROLES INDEPENDIENTES ---
+
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = container.getBoundingClientRect();
+            const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+            const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+            
+            video.style.transformOrigin = `${xPct}% ${yPct}%`;
+
+            if (e.deltaY < 0) {
+                zoomLevel = Math.min(zoomLevel + ZOOM_SPEED, MAX_ZOOM);
+            } else {
+                zoomLevel = Math.max(zoomLevel - ZOOM_SPEED, MIN_ZOOM);
+            }
+
+            applyTransform();
+        }, { passive: false });
+
+        container.addEventListener('mousedown', (e) => {
+            if (zoomLevel > 1) {
+                isDragging = true;
+                startX = e.clientX - translateX * zoomLevel;
+                startY = e.clientY - translateY * zoomLevel;
+                video.style.transition = 'none';
+            }
+        });
+
+        // Soporte para Táctil (Móviles independientes)
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1 && zoomLevel > 1) {
+                isDragging = true;
+                const touch = e.touches[0];
+                startX = touch.clientX - translateX * zoomLevel;
+                startY = touch.clientY - translateY * zoomLevel;
+                video.style.transition = 'none';
+            }
+        }, { passive: true });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            translateX = (e.clientX - startX) / zoomLevel;
+            translateY = (e.clientY - startY) / zoomLevel;
+            applyTransform();
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (!isDragging || e.touches.length !== 1) return;
+            const touch = e.touches[0];
+            translateX = (touch.clientX - startX) / zoomLevel;
+            translateY = (touch.clientY - startY) / zoomLevel;
+            applyTransform();
+        }, { passive: false });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            video.style.transition = 'transform 0.1s ease-out';
+        });
+
+        window.addEventListener('touchend', () => {
+            isDragging = false;
+            video.style.transition = 'transform 0.1s ease-out';
+        });
+
+        // --- FUNCIONALIDAD DE COMPARTIR ---
+
+        function openShareModal() {
+            shareLinkDisplay.innerText = window.location.href;
+            shareModal.style.display = 'block';
+        }
+
+        function closeShareModal() {
+            shareModal.style.display = 'none';
+        }
+
+        function copyShareLink() {
+            const text = shareLinkDisplay.innerText;
+            const tempInput = document.createElement("input");
+            tempInput.value = text;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand("copy");
+            document.body.removeChild(tempInput);
+            
+            const btn = document.querySelector('.modal-btn');
+            btn.innerText = '¡COPIADO!';
+            setTimeout(() => { btn.innerText = 'COPIAR'; }, 2000);
+        }
+
+        // --- INICIALIZACIÓN ---
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: { ideal: 1920 }, height: { ideal: 1080 } } 
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error(err);
+                errorElement.style.display = 'block';
+            }
+        }
+
+        setInterval(updateClock, 1000);
+        updateClock();
+        window.onload = initCamera;
+    </script>
+</body>
+</html>
